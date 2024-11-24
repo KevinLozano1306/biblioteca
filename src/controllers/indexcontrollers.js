@@ -133,6 +133,20 @@ export const prestarLibro = async (req, res) => {
             await client.query('ROLLBACK');
             return res.status(400).json({ message: 'No hay unidades disponibles para este libro' });
         }
+        const historialData = {
+            accion: 'Préstamo de libro',
+            id_libro,
+            id_user,
+            fecha_prestamo,
+            fecha_entrega,
+            cantidad_disponible: cantidadDisponible - 1
+        };
+
+        await client.query(
+            `INSERT INTO historial (datos) 
+             VALUES ($1)`,
+            [JSON.stringify(historialData)] // Convertir el objeto a formato JSONB
+        );
 
         // Registrar el préstamo
         const prestamoResult = await client.query(
