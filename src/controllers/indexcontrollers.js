@@ -32,6 +32,16 @@ export const getUser = async (req, res) => {
         res.status(500).json({ message: 'Error del servidor' });
     }
 };
+export const getallUsers = async (req, res) => {
+    try {
+        // Consulta para traer todos los libros
+        const result = await pool.query('SELECT * FROM users');
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error ejecutando la consulta:', error);
+        res.status(500).json({ message: 'Error del servidor' });
+    }
+};
 
 export const postUser = async (req, res) => {
     try {
@@ -82,7 +92,7 @@ export const getLibros = async (req, res) => {
 export const prestarLibro = async (req, res) => {
     const client = await pool.connect(); // Conexión para manejar la transacción
     try {
-        const { id_libro, id_user, fecha_entrega } = req.body;
+        const { id_libro, id_user, fecha_prestamo,fecha_entrega } = req.body;
 
         if ([id_libro, id_user, fecha_entrega].some((field) => field == null)) {
             return res.status(400).json({ message: 'Todos los campos son obligatorios: id_libro, id_user, fecha_entrega' });
@@ -125,11 +135,10 @@ export const prestarLibro = async (req, res) => {
         }
 
         // Registrar el préstamo
-        const fechaPrestamo = new Date();
         const prestamoResult = await client.query(
             `INSERT INTO prestamos (fecha_prestamo, fecha_entrega, estado, id_user, id_libro) 
              VALUES ($1, $2, 0, $3, $4) RETURNING id_prestamo`,
-            [fechaPrestamo, fecha_entrega, id_user, id_libro]
+            [fecha_prestamo, fecha_entrega, id_user, id_libro]
         );
 
         const id_prestamo = prestamoResult.rows[0].id_prestamo;
@@ -150,7 +159,7 @@ export const prestarLibro = async (req, res) => {
                 id_prestamo,
                 id_libro,
                 id_user,
-                fecha_prestamo: fechaPrestamo,
+                fecha_prestamo,
                 fecha_entrega,
             },
         });
@@ -205,14 +214,24 @@ export const devolverLibro = async (req, res) => {
         if (fechaDevolucion > fechaEntrega) {
             const diasRetraso = Math.ceil((fechaDevolucion - fechaEntrega) / (1000 * 60 * 60 * 24));
             multa = diasRetraso * 1000; // Suponiendo una multa de 1000 por día de retraso
-
-            // Registrar la multa en la tabla "multas"
+        
+            // Actualizar la multa en la tabla "multas"
             await client.query(
-                `INSERT INTO multas (id_prestamo, id_user, monto, fecha_generacion) 
-                 VALUES ($1, $2, $3, $4)`,
-                [id_prestamo, id_user, multa, fecha_devolucion]
+                `UPDATE multas 
+                 SET monto = $1, fecha_pago = $2 
+                 WHERE id_prestamo = $3 AND estado = FALSE`,
+                [multa, fecha_devolucion, id_prestamo]
+            );
+        
+            // Actualizar el campo de multa en la tabla "prestamos"
+            await client.query(
+                `UPDATE prestamos 
+                 SET multa = $1 
+                 WHERE id_prestamo = $2`,
+                [multa, id_prestamo]
             );
         }
+        
 
         // Actualizar el estado del préstamo y devolver el libro al inventario
         await client.query(
@@ -289,3 +308,127 @@ export const EstadoMulta = async (req, res) => {
         res.status(500).json({ message: 'Error del servidor' });
     }
 };
+
+export const getPrestamos = async (req, res) => {
+    const client = await pool.connect(); // Usamos una conexión para manejar la transacción
+    try {
+        // Realizar el INNER JOIN entre prestamos, users y libros
+        const result = await pool.query(`
+            SELECT 
+                p.id_prestamo, 
+                u.id_user, 
+                u.username, 
+                l.titulo, 
+                p.fecha_entrega
+            FROM 
+                prestamos p
+            INNER JOIN 
+                users u 
+            ON 
+                p.id_user = u.id_user
+            INNER JOIN 
+                libros l
+            ON 
+                p.id_libro = l.id_libro
+        `);
+
+        // Obtener la fecha actual para comparar con fecha_entrega
+        const fechaActual = new Date();
+
+        // Iteramos sobre los préstamos obtenidos
+        for (const prestamo of result.rows) {
+            const { id_prestamo, fecha_entrega, id_user } = prestamo;
+
+            // Verificar si ya existe una multa para este préstamo
+            const multaExistente = await pool.query(`
+                SELECT * FROM multas WHERE id_prestamo = $1 AND estado = FALSE
+            `, [id_prestamo]);
+
+            // Si no existe multa, verificamos si el préstamo está fuera de fecha
+            if (multaExistente.rows.length === 0) {
+                const fechaEntrega = new Date(fecha_entrega);
+
+                if (fechaActual > fechaEntrega) {
+                    // Si la fecha actual es mayor a la de entrega, se genera la multa
+                    const diasRetraso = Math.ceil((fechaActual - fechaEntrega) / (1000 * 60 * 60 * 24));
+                    const multa = (diasRetraso-1)* 1000; // Ejemplo de multa de 1000 por día de retraso
+
+                    // Insertar la multa en la tabla de multas
+                    await pool.query(`
+                        INSERT INTO multas (id_prestamo, id_user, monto, fecha_generacion, estado)
+                        VALUES ($1, $2, $3, $4, FALSE)
+                    `, [id_prestamo, id_user, multa, fechaActual]);
+
+                    // También actualizar la tabla de préstamos con el monto de la multa
+                    await pool.query(`
+                        UPDATE prestamos
+                        SET multa = $1
+                        WHERE id_prestamo = $2
+                    `, [multa, id_prestamo]);
+                }
+            }
+        }
+
+        // Responder con los préstamos
+        res.status(200).json({
+            message: 'Datos obtenidos exitosamente',
+            prestamos: result.rows,
+        });
+    } catch (error) {
+        console.error('Error al ejecutar el INNER JOIN:', error);
+        res.status(500).json({
+            message: 'Error del servidor',
+            error: error.message,
+        });
+    } finally {
+        client.release(); // Liberar la conexión
+    }
+};
+export const getPrestamosid = async (req, res) => {
+    const { id_user } = req.query; // Obtener el id_user desde los parámetros de la URL
+
+    try {
+        // Realizar el INNER JOIN entre prestamos, users y libros para obtener los detalles de los préstamos del usuario
+        const result = await pool.query(`
+            SELECT 
+                p.id_prestamo, 
+                u.id_user, 
+                u.username, 
+                l.titulo, 
+                p.fecha_prestamo, 
+                p.fecha_entrega, 
+                p.fecha_devolucion, 
+                p.estado, 
+                p.multa
+            FROM 
+                prestamos p
+            INNER JOIN 
+                users u 
+            ON 
+                p.id_user = u.id_user
+            INNER JOIN 
+                libros l
+            ON 
+                p.id_libro = l.id_libro
+            WHERE 
+                p.id_user = $1
+        `, [id_user]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'No se encontraron préstamos para este usuario' });
+        }
+
+        // Enviar la respuesta con los datos obtenidos
+        res.status(200).json({
+            message: 'Datos de los préstamos obtenidos exitosamente',
+            prestamos: result.rows, // Devolver los préstamos encontrados
+        });
+    } catch (error) {
+        console.error('Error al ejecutar la consulta:', error);
+        res.status(500).json({
+            message: 'Error del servidor',
+            error: error.message,
+        });
+    }
+};
+
