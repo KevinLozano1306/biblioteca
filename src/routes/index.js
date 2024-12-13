@@ -1,18 +1,21 @@
 import { Router } from 'express';
-import { getUser,postUser,postLibro,getLibros, prestarLibro, devolverLibro, EstadoMulta, getallUsers, getPrestamos,getPrestamosid} from '../controllers/indexcontrollers.js'
+import { postUser,UpdateUser,getAllUsers,DeleteUser,postProduct, UpdateProduct, getAllProducts,DeleteProduct,postCategoria,UpdateCategoria,getAllCategorias,DeleteCategoria} from '../controllers/indexcontrollers.js'
 
  const router = Router();
-
- router.get('/getUser',getUser)
- router.get('/getLibros',getLibros)
- router.get('/getallUsers',getallUsers)
- router.get('/getPrestamos',getPrestamos)
- router.get('/getPrestamosid',getPrestamosid)
+//get
+ router.get('/getAllUsers',getAllUsers)
+ router.get('/getAllProducts',getAllProducts)
+ router.get('/getAllCategorias',getAllCategorias)
 
  //post
  router.post('/postUser',postUser)
- router.post('/postLibro',postLibro)
- router.post('/prestarLibro',prestarLibro)
- router.post('/devolverLibro',devolverLibro)
- router.post('/EstadoMulta',EstadoMulta)
+ router.post('/UpdateUser',UpdateUser)
+ router.post('/DeleteUser',DeleteUser)
+ router.post('/postProduct',postProduct)
+ router.post('/UpdateProduct',UpdateProduct)
+ router.post('/DeleteProduct',DeleteProduct)
+ router.post('/postCategoria',postCategoria)
+ router.post('/UpdateCategoria',UpdateCategoria)
+ router.post('/DeleteCategoria',DeleteCategoria)
+
  export default router;

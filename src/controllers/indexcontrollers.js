@@ -1,53 +1,11 @@
 import { pool } from '../database/conexiondatabase.js'; 
 
-export const getUser = async (req, res) => {
-    try {
-        const { id_user } = req.query; // Obtener el id_user desde la URL
-
-        if (!id_user) {
-            return res.status(400).json({ message: 'id_user es requerido' });
-        }
-
-        // Consulta para obtener las multas del usuario
-        const multasResult = await pool.query(
-            'SELECT * FROM multas WHERE id_user = $1',
-            [id_user]
-        );
-
-        // Consulta para obtener los libros prestados por el usuario
-        const prestamosResult = await pool.query(
-            'SELECT * FROM prestamos WHERE id_user = $1',
-            [id_user]
-        );
-
-        // Respuesta exitosa con ambas informaciones
-        res.status(200).json({
-            message: 'Datos del usuario',
-            multas: multasResult.rows,
-            prestamos: prestamosResult.rows,
-        });
-
-    } catch (error) {
-        console.error('Error ejecutando la consulta:', error);
-        res.status(500).json({ message: 'Error del servidor' });
-    }
-};
-export const getallUsers = async (req, res) => {
-    try {
-        // Consulta para traer todos los libros
-        const result = await pool.query('SELECT * FROM users');
-        res.json(result.rows);
-    } catch (error) {
-        console.error('Error ejecutando la consulta:', error);
-        res.status(500).json({ message: 'Error del servidor' });
-    }
-};
 
 export const postUser = async (req, res) => {
     try {
-        const { username, rol } = req.body; 
+        const { nombre, email, password } = req.body; 
         const result = await pool.query(
-            'INSERT INTO users (username, rol) VALUES ($1, $2)', [username, rol]
+            'INSERT INTO usuarios (nombre, email, password) VALUES ($1, $2, $3)', [nombre, email, password]
         );
         res.send('Usuario agregado exitosamente');
     } catch (error) {
@@ -55,394 +13,133 @@ export const postUser = async (req, res) => {
         res.status(500).json({ message: 'Error' });
     }
 };
-// Crear un nuevo libro
-export const postLibro = async (req, res) => {
+
+export const UpdateUser = async (req, res) => {
     try {
-        const { titulo, autor, anio_publicacion, cantidad_disponible } = req.body;
-
-        // Validar campos obligatorios
-        if (!titulo || !autor || !anio_publicacion || cantidad_disponible == null) {
-            return res.status(400).json({ message: 'Todos los campos son obligatorios' });
-        }
-
+        const { nombre, email, password,id_usuario } = req.body; 
         const result = await pool.query(
-            'INSERT INTO libros (titulo, autor, anio_publicacion, cantidad_disponible) VALUES ($1, $2, $3, $4) RETURNING *',
-            [titulo, autor, anio_publicacion, cantidad_disponible]
+            'UPDATE usuarios SET nombre = $1, email = $2, password = $3 WHERE id_usuario = $4', [nombre, email, password, id_usuario]
         );
-
-        res.status(201).json({
-            message: 'Libro creado exitosamente',
-            libro: result.rows[0],
-        });
+        res.send('Usuario actualizado exitosamente');
     } catch (error) {
         console.error('Error ejecutando la consulta:', error);
-        res.status(500).json({ message: 'Error del servidor' });
+        res.status(500).json({ message: 'Error' });
     }
 };
-export const getLibros = async (req, res) => {
+export const getAllUsers = async (req, res) => {
     try {
-        // Consulta para traer todos los libros
-        const result = await pool.query('SELECT * FROM libros');
-        res.json(result.rows); // Retorna los libros como un arreglo en JSON
+        const result = await pool.query(
+            'SELECT * FROM usuarios'
+        );
+        res.json(result.rows);
     } catch (error) {
         console.error('Error ejecutando la consulta:', error);
-        res.status(500).json({ message: 'Error del servidor' });
+        res.status(500).json({ message: 'Error' });
     }
 };
-export const prestarLibro = async (req, res) => {
-    const client = await pool.connect(); // Conexión para manejar la transacción
+export const DeleteUser = async (req, res) => {
     try {
-        const { id_libro, id_user, fecha_prestamo,fecha_entrega } = req.body;
-
-        if ([id_libro, id_user, fecha_entrega].some((field) => field == null)) {
-            return res.status(400).json({ message: 'Todos los campos son obligatorios: id_libro, id_user, fecha_entrega' });
-        }
-
-        // Verificar si el usuario tiene multas pendientes
-        const multaResult = await client.query(
-            `SELECT * 
-             FROM multas 
-             WHERE id_user = $1 AND estado = FALSE`,
-            [id_user]
+        const {id_usuario } = req.body; 
+        const result = await pool.query(
+            'DELETE FROM usuarios WHERE id_usuario = $1', [id_usuario]
         );
-
-        if (multaResult.rows.length > 0) {
-            return res.status(403).json({
-                message: 'El usuario tiene multas pendientes y no puede realizar un nuevo préstamo.'
-            });
-        }
-
-        await client.query('BEGIN'); // Inicia la transacción
-
-        // Verificar si el libro existe y tiene unidades disponibles
-        const libroResult = await client.query(
-            `SELECT cantidad_disponible 
-             FROM libros 
-             WHERE id_libro = $1`,
-            [id_libro]
-        );
-
-        if (libroResult.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ message: 'Libro no encontrado' });
-        }
-
-        const cantidadDisponible = libroResult.rows[0].cantidad_disponible;
-
-        if (cantidadDisponible == null || cantidadDisponible <= 0) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ message: 'No hay unidades disponibles para este libro' });
-        }
-        const historialData = {
-            accion: 'Préstamo de libro',
-            id_libro,
-            id_user,
-            fecha_prestamo,
-            fecha_entrega,
-            cantidad_disponible: cantidadDisponible - 1
-        };
-
-        await client.query(
-            `INSERT INTO historial (datos) 
-             VALUES ($1)`,
-            [JSON.stringify(historialData)] // Convertir el objeto a formato JSONB
-        );
-
-        // Registrar el préstamo
-        const prestamoResult = await client.query(
-            `INSERT INTO prestamos (fecha_prestamo, fecha_entrega, estado, id_user, id_libro) 
-             VALUES ($1, $2, 0, $3, $4) RETURNING id_prestamo`,
-            [fecha_prestamo, fecha_entrega, id_user, id_libro]
-        );
-
-        const id_prestamo = prestamoResult.rows[0].id_prestamo;
-
-        // Actualizar la cantidad disponible del libro
-        await client.query(
-            `UPDATE libros 
-             SET cantidad_disponible = cantidad_disponible - 1 
-             WHERE id_libro = $1`,
-            [id_libro]
-        );
-
-        await client.query('COMMIT'); // Confirmar la transacción
-
-        res.status(201).json({
-            message: 'Préstamo registrado exitosamente',
-            prestamo: {
-                id_prestamo,
-                id_libro,
-                id_user,
-                fecha_prestamo,
-                fecha_entrega,
-            },
-        });
+        res.send('Usuario eliminado exitosamente');
     } catch (error) {
-        await client.query('ROLLBACK'); // Manejo de errores y rollback
-        console.error('Error al procesar el préstamo:', error);
-        res.status(500).json({
-            message: 'Error del servidor',
-            error: error.message
-        });
-    } finally {
-        client.release(); // Liberar la conexión
+        console.error('Error ejecutando la consulta:', error);
+        res.status(500).json({ message: 'Error' });
     }
 };
-export const devolverLibro = async (req, res) => {
-    const client = await pool.connect();
+export const postProduct = async (req, res) => {
     try {
-        const { id_prestamo, fecha_devolucion } = req.body;
-
-        if (!id_prestamo || !fecha_devolucion) {
-            return res.status(400).json({ message: 'id_prestamo y fecha_devolucion son obligatorios' });
-        }
-
-        await client.query('BEGIN'); // Inicia la transacción
-
-        // Obtener información del préstamo
-        const prestamoResult = await client.query(
-            `SELECT p.*, u.id_user 
-             FROM prestamos p
-             JOIN users u ON p.id_user = u.id_user
-             WHERE p.id_prestamo = $1`,
-            [id_prestamo]
+        const { nombre_producto, descripcion, precio, foto } = req.body; 
+        const result = await pool.query(
+            'INSERT INTO productos (nombre_producto, descripcion, precio, foto) VALUES ($1, $2, $3,$4)', [nombre_producto, descripcion, precio, foto]
         );
-
-        if (prestamoResult.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ message: 'Préstamo no encontrado' });
-        }
-
-        const prestamo = prestamoResult.rows[0];
-        const { fecha_entrega, estado, id_libro, id_user } = prestamo;
-
-        if (estado === 1) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ message: 'El préstamo ya fue devuelto' });
-        }
-
-        const fechaEntrega = new Date(fecha_entrega);
-        const fechaDevolucion = new Date(fecha_devolucion);
-        let multa = 0;
-
-        if (fechaDevolucion > fechaEntrega) {
-            const diasRetraso = Math.ceil((fechaDevolucion - fechaEntrega) / (1000 * 60 * 60 * 24));
-            multa = diasRetraso * 1000; // Suponiendo una multa de 1000 por día de retraso
-        
-            // Actualizar la multa en la tabla "multas"
-            await client.query(
-                `UPDATE multas 
-                 SET monto = $1, fecha_pago = $2 
-                 WHERE id_prestamo = $3 AND estado = FALSE`,
-                [multa, fecha_devolucion, id_prestamo]
-            );
-        
-            // Actualizar el campo de multa en la tabla "prestamos"
-            await client.query(
-                `UPDATE prestamos 
-                 SET multa = $1 
-                 WHERE id_prestamo = $2`,
-                [multa, id_prestamo]
-            );
-        }
-        
-
-        // Actualizar el estado del préstamo y devolver el libro al inventario
-        await client.query(
-            `UPDATE prestamos 
-             SET fecha_devolucion = $1, estado = 1 
-             WHERE id_prestamo = $2`,
-            [fecha_devolucion, id_prestamo]
-        );
-
-        await client.query(
-            `UPDATE libros 
-             SET cantidad_disponible = cantidad_disponible + 1 
-             WHERE id_libro = $1`,
-            [id_libro]
-        );
-
-        await client.query('COMMIT'); // Confirma la transacción
-
-        res.status(200).json({
-            message: 'Devolución registrada exitosamente',
-            devolucion: {
-                id_prestamo,
-                fecha_devolucion,
-                multa
-            },
-        });
+        res.send('Producto agregado exitosamente');
     } catch (error) {
-        await client.query('ROLLBACK'); // Revertir transacción en caso de error
-        console.error('Error al procesar la devolución:', error);
-        res.status(500).json({
-            message: 'Error del servidor',
-            error: error.message
-        });
-    } finally {
-        client.release(); // Liberar conexión
+        console.error('Error ejecutando la consulta:', error);
+        res.status(500).json({ message: 'Error' });
     }
-    
 };
-export const EstadoMulta = async (req, res) => {
+export const UpdateProduct = async (req, res) => {
     try {
-        const { id_multa } = req.body; // Obtener el id_multa desde el cuerpo de la solicitud
-
-        // Validar si el id_multa fue proporcionado
-        if (!id_multa) {
-            return res.status(400).json({ message: 'id_multa es requerido' });
-        }
-
-        // Verificar si la multa existe y su estado es FALSE
-        const multaResult = await pool.query(
-            `SELECT * FROM multas WHERE id_multa = $1 AND estado = FALSE`,
-            [id_multa]
+        const { nombre_producto, descripcion, precio,foto,id_producto } = req.body; 
+        const result = await pool.query(
+            'UPDATE productos SET nombre_producto = $1, descripcion = $2, precio = $3, foto = $4 WHERE id_producto = $5', [nombre_producto, descripcion, precio, foto,id_producto]
         );
-
-        // Si no se encuentra la multa con estado FALSE, retornar un error
-        if (multaResult.rows.length === 0) {
-            return res.status(404).json({
-                message: 'No se encontró una multa pendiente con el id proporcionado o ya está pagada.'
-            });
-        }
-
-        // Actualizar el estado de la multa de FALSE a TRUE
-        await pool.query(
-            `UPDATE multas SET estado = TRUE WHERE id_multa = $1`,
-            [id_multa]
+        res.send('Usuario actualizado exitosamente');
+    } catch (error) {
+        console.error('Error ejecutando la consulta:', error);
+        res.status(500).json({ message: 'Error' });
+    }
+}
+export const getAllProducts = async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT * FROM productos'
         );
-
-        // Respuesta exitosa
-        res.status(200).json({
-            message: 'El estado de la multa ha sido actualizado a TRUE.'
-        });
-
+        res.json(result.rows);
     } catch (error) {
-        console.error('Error al cambiar el estado de la multa:', error);
-        res.status(500).json({ message: 'Error del servidor' });
+        console.error('Error ejecutando la consulta:', error);
+        res.status(500).json({ message: 'Error' });
     }
 };
-
-export const getPrestamos = async (req, res) => {
-    const client = await pool.connect(); // Usamos una conexión para manejar la transacción
+export const DeleteProduct = async (req, res) => {
     try {
-        // Realizar el INNER JOIN entre prestamos, users y libros
-        const result = await pool.query(`
-            SELECT 
-                p.id_prestamo, 
-                u.id_user, 
-                u.username, 
-                l.titulo, 
-                p.fecha_entrega
-            FROM 
-                prestamos p
-            INNER JOIN 
-                users u 
-            ON 
-                p.id_user = u.id_user
-            INNER JOIN 
-                libros l
-            ON 
-                p.id_libro = l.id_libro
-        `);
-
-        // Obtener la fecha actual para comparar con fecha_entrega
-        const fechaActual = new Date();
-
-        // Iteramos sobre los préstamos obtenidos
-        for (const prestamo of result.rows) {
-            const { id_prestamo, fecha_entrega, id_user } = prestamo;
-
-            // Verificar si ya existe una multa para este préstamo
-            const multaExistente = await pool.query(`
-                SELECT * FROM multas WHERE id_prestamo = $1 AND estado = FALSE
-            `, [id_prestamo]);
-
-            // Si no existe multa, verificamos si el préstamo está fuera de fecha
-            if (multaExistente.rows.length === 0) {
-                const fechaEntrega = new Date(fecha_entrega);
-
-                if (fechaActual > fechaEntrega) {
-                    // Si la fecha actual es mayor a la de entrega, se genera la multa
-                    const diasRetraso = Math.ceil((fechaActual - fechaEntrega) / (1000 * 60 * 60 * 24));
-                    const multa = (diasRetraso-1)* 1000; // Ejemplo de multa de 1000 por día de retraso
-
-                    // Insertar la multa en la tabla de multas
-                    await pool.query(`
-                        INSERT INTO multas (id_prestamo, id_user, monto, fecha_generacion, estado)
-                        VALUES ($1, $2, $3, $4, FALSE)
-                    `, [id_prestamo, id_user, multa, fechaActual]);
-
-                    // También actualizar la tabla de préstamos con el monto de la multa
-                    await pool.query(`
-                        UPDATE prestamos
-                        SET multa = $1
-                        WHERE id_prestamo = $2
-                    `, [multa, id_prestamo]);
-                }
-            }
-        }
-
-        // Responder con los préstamos
-        res.status(200).json({
-            message: 'Datos obtenidos exitosamente',
-            prestamos: result.rows,
-        });
+        const {id_producto } = req.body; 
+        const result = await pool.query(
+            'DELETE FROM productos WHERE id_producto = $1', [id_producto]
+        );
+        res.send('Producto eliminado exitosamente');
     } catch (error) {
-        console.error('Error al ejecutar el INNER JOIN:', error);
-        res.status(500).json({
-            message: 'Error del servidor',
-            error: error.message,
-        });
-    } finally {
-        client.release(); // Liberar la conexión
+        console.error('Error ejecutando la consulta:', error);
+        res.status(500).json({ message: 'Error' });
     }
 };
-export const getPrestamosid = async (req, res) => {
-    const { id_user } = req.query; // Obtener el id_user desde los parámetros de la URL
-
+export const postCategoria = async (req, res) => {
     try {
-        // Realizar el INNER JOIN entre prestamos, users y libros para obtener los detalles de los préstamos del usuario
-        const result = await pool.query(`
-            SELECT 
-                p.id_prestamo, 
-                u.id_user, 
-                u.username, 
-                l.titulo, 
-                p.fecha_prestamo, 
-                p.fecha_entrega, 
-                p.fecha_devolucion, 
-                p.estado, 
-                p.multa
-            FROM 
-                prestamos p
-            INNER JOIN 
-                users u 
-            ON 
-                p.id_user = u.id_user
-            INNER JOIN 
-                libros l
-            ON 
-                p.id_libro = l.id_libro
-            WHERE 
-                p.id_user = $1
-        `, [id_user]);
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({ message: 'No se encontraron préstamos para este usuario' });
-        }
-
-        // Enviar la respuesta con los datos obtenidos
-        res.status(200).json({
-            message: 'Datos de los préstamos obtenidos exitosamente',
-            prestamos: result.rows, // Devolver los préstamos encontrados
-        });
+        const { nombre_categoria, descripcion} = req.body; 
+        const result = await pool.query(
+            'INSERT INTO categorias (nombre_categoria, descripcion) VALUES ($1, $2)', [nombre_categoria, descripcion]
+        );
+        res.send('Categoria agregada exitosamente');
     } catch (error) {
-        console.error('Error al ejecutar la consulta:', error);
-        res.status(500).json({
-            message: 'Error del servidor',
-            error: error.message,
-        });
+        console.error('Error ejecutando la consulta:', error);
+        res.status(500).json({ message: 'Error' });
     }
 };
-
+export const UpdateCategoria = async (req, res) => {
+    try {
+        const { nombre_categoria, descripcion,id_categoria } = req.body; 
+        const result = await pool.query(
+            'UPDATE categorias SET nombre_categoria = $1, descripcion = $2 WHERE id_categoria = $3', [nombre_categoria, descripcion,id_categoria]
+        );
+        res.send('Categoria actualizada exitosamente');
+    } catch (error) {
+        console.error('Error ejecutando la consulta:', error);
+        res.status(500).json({ message: 'Error' });
+    }
+}
+export const getAllCategorias = async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT * FROM categorias'
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error ejecutando la consulta:', error);
+        res.status(500).json({ message: 'Error' });
+    }
+};
+export const DeleteCategoria = async (req, res) => {
+    try {
+        const {id_categoria } = req.body; 
+        const result = await pool.query(
+            'DELETE FROM categorias WHERE id_categoria = $1', [id_categoria]
+        );
+        res.send('Categoria eliminada exitosamente');
+    } catch (error) {
+        console.error('Error ejecutando la consulta:', error);
+        res.status(500).json({ message: 'Error' });
+    }
+};

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "nodemon src/index.js"
   },
-  "author": "kevin lozano",
+  "author": "Jhon Vargas",
   "license": "ISC",
   "description": "",
   "dependencies": {
